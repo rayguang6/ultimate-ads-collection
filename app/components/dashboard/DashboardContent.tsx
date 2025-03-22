@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/app/lib/supabase';
 import Navbar from '../common/Navbar';
 import SearchBar from '../common/SearchBar';
+import TagSelector from '../common/TagSelector';
 import AdsList from '../facebook-ads/AdsList';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { useAdsData } from '@/app/hooks/useAdsData';
@@ -23,7 +24,11 @@ export default function DashboardContent() {
     totalAdsCount, 
     setSearchQuery,
     searchQuery,
-    loadMore 
+    loadMore,
+    availableTags,
+    tagsLoading,
+    selectedTagIds,
+    toggleTagFilter
   } = useAdsData();
 
   useEffect(() => {
@@ -69,6 +74,11 @@ export default function DashboardContent() {
           onSearch={handleSearch} 
           totalCount={totalAdsCount} 
           displayedCount={ads.length}
+        />
+        
+        <TagSelector
+          selectedTagIds={selectedTagIds}
+          onTagToggle={toggleTagFilter}
         />
         
         {error && (

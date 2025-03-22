@@ -1,6 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
+import { getTagsForAd, removeTagFromAd } from '../../lib/tagService';
+import { Tag } from '../../types/tag';
+import AdTagEditor from './AdTagEditor';
+import { useTagStore } from '../../store/tagStore';
 
 interface AdCardProps {
   ad: {
@@ -19,6 +24,32 @@ interface AdCardProps {
 
 export default function AdCard({ ad }: AdCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showTagEditor, setShowTagEditor] = useState(false);
+  const [tagEditorAnchor, setTagEditorAnchor] = useState<DOMRect | null>(null);
+  const tagAreaRef = useRef<HTMLDivElement>(null);
+  const { tags: globalTags } = useTagStore();
+
+  useEffect(() => {
+    const loadTags = async () => {
+      try {
+        setLoading(true);
+        const adTags = await getTagsForAd(ad.id);
+        const updatedTags = adTags.map(adTag => {
+          const latestTag = globalTags.find(t => t.id === adTag.id);
+          return latestTag || adTag;
+        });
+        setTags(updatedTags);
+      } catch (error) {
+        console.error('Error loading tags:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadTags();
+  }, [ad.id, globalTags]);
 
   // Function to toggle the expanded state
   const toggleExpand = () => {
@@ -27,6 +58,18 @@ export default function AdCard({ ad }: AdCardProps) {
 
   // Split the ad text into lines
   const adLines = ad.ad_text ? ad.ad_text.split('\n') : [];
+
+  const handleTagAreaClick = () => {
+    if (tagAreaRef.current) {
+      const rect = tagAreaRef.current.getBoundingClientRect();
+      setTagEditorAnchor(rect);
+      setShowTagEditor(true);
+    }
+  };
+
+  const handleTagsChange = (newTags: Tag[]) => {
+    setTags(newTags);
+  };
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -97,6 +140,48 @@ export default function AdCard({ ad }: AdCardProps) {
           </div>
         )}
       </div>
+
+      {/* Tags section - Modified to make the entire area clickable */}
+      <div 
+        ref={tagAreaRef}
+        onClick={handleTagAreaClick}
+        className="px-4 py-2 border-t cursor-pointer hover:bg-gray-50 transition-colors"
+      >
+        <div className="flex flex-wrap gap-1.5 items-center">
+          {loading ? (
+            <div className="animate-pulse flex">
+              {[1, 2].map(i => (
+                <div key={i} className="h-6 w-16 bg-gray-200 rounded-full mx-1"></div>
+              ))}
+            </div>
+          ) : tags.length > 0 ? (
+            tags.map(tag => (
+              <span 
+                key={tag.id} 
+                className="px-2 py-0.5 text-xs rounded"
+                style={{ backgroundColor: tag.color || '#FFFFFF' }}
+              >
+                {tag.name}
+              </span>
+            ))
+          ) : (
+            <span className="text-xs text-gray-400">Add tags...</span>
+          )}
+        </div>
+      </div>
+      
+      {showTagEditor && (
+        <AdTagEditor 
+          adId={ad.id} 
+          onClose={() => {
+            setShowTagEditor(false);
+            setTagEditorAnchor(null);
+          }}
+          anchorRect={tagEditorAnchor}
+          currentTags={tags}
+          onTagsChange={handleTagsChange}
+        />
+      )}
     </div>
   );
 } 
