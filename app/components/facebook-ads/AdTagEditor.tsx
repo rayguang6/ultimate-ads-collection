@@ -1,12 +1,10 @@
-"use client";
-
 import { useState, useEffect, useRef, KeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Tag } from '@/app/types/tag';
 import { getAllTags, getTagsForAd, tagAd, removeTagFromAd, addTag, deleteTag, updateTag } from '@/app/lib/tagService';
 import { TAG_COLORS, TagColorKey } from '@/app/constants/colors';
 import { useTagStore } from '@/app/store/tagStore';
-import debounce from 'lodash/debounce';
-import { createPortal } from 'react-dom';
+import { debounce } from 'lodash';
 
 interface AdTagEditorProps {
   adId: string;
@@ -16,22 +14,7 @@ interface AdTagEditorProps {
   onTagsChange: (newTags: Tag[]) => void;
 }
 
-// Move helper functions outside component
-const getRandomColor = () => {
-  const colors = Object.values(TAG_COLORS);
-  return colors[Math.floor(Math.random() * colors.length)].bg;
-};
-
-// Add this type for menu positioning
-interface MenuPosition {
-  top: number;
-  left: number;
-  transformOrigin: string;
-}
-
 export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, onTagsChange }: AdTagEditorProps) {
-  // Initialize with null instead of random value
-  const [previewColor, setPreviewColor] = useState<string | null>(null);
   const [availableTags, setAvailableTags] = useState<Tag[]>([]);
   const [adTags, setAdTags] = useState<Tag[]>(currentTags);
   const [loading, setLoading] = useState(true);
@@ -39,76 +22,29 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
   const [editingTag, setEditingTag] = useState<Tag | null>(null);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const popupRef = useRef<HTMLDivElement>(null);
+  const menuPortalRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [isRenaming, setIsRenaming] = useState<string | null>(null);
   const [newTagName, setNewTagName] = useState('');
   const { tags: availableTagsFromStore, updateTag: updateTagFromStore, deleteTag: deleteTagFromStore, addTag: addTagToStore } = useTagStore();
+  const [previewColor, setPreviewColor] = useState('');
+  const [editMenuPosition, setEditMenuPosition] = useState<{ top: number; left: number; } | null>(null);
 
-  // Add new state for menu positioning
-  const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
-  
-  // Function to calculate menu position
-  const calculateMenuPosition = (buttonElement: HTMLElement) => {
-    const rect = buttonElement.getBoundingClientRect();
-    const viewportHeight = window.innerHeight;
-    const viewportWidth = window.innerWidth;
-    const menuWidth = 192; // 48rem
-    const menuHeight = 120; // Approximate height of menu
-    const padding = 8; // Minimum padding from viewport edges
-    
-    let left = rect.right + padding;
-    let top = rect.top;
-    let transformOrigin = 'top left';
-
-    // Check right edge of screen
-    if (left + menuWidth > viewportWidth - padding) {
-      left = rect.left - menuWidth - padding;
-      transformOrigin = 'top right';
-      
-      // If still overflowing right, align with right edge of viewport
-      if (left + menuWidth > viewportWidth - padding) {
-        left = viewportWidth - menuWidth - padding;
-      }
-    }
-
-    // Check left edge of screen
-    if (left < padding) {
-      left = padding;
-      transformOrigin = 'top left';
-    }
-
-    // Check bottom edge of screen
-    if (top + menuHeight > viewportHeight - padding) {
-      top = viewportHeight - menuHeight - padding;
-      
-      // If still overflowing bottom, align with top of viewport
-      if (top < padding) {
-        top = padding;
-      }
-    }
-
-    // Check top edge of screen
-    if (top < padding) {
-      top = padding;
-    }
-
-    return {
-      top,
-      left,
-      transformOrigin,
-    };
+  // Move getRandomColor outside the component
+  const getRandomColor = () => {
+    const colors = Object.values(TAG_COLORS);
+    return colors[Math.floor(Math.random() * colors.length)].bg;
   };
 
-  // Initialize preview color on mount only
+  // Initialize the preview color on the client side only
   useEffect(() => {
-    if (previewColor === null) {
-      setPreviewColor(getRandomColor() || TAG_COLORS.default.bg);
-    }
-  }, []);
+    setPreviewColor(getRandomColor());
+  }, []); // Run once on mount
 
-  // Update search query effect
+  // Update the search query effect
   useEffect(() => {
-    if (!searchQuery && previewColor !== null) {
+    if (!searchQuery) {
+      // Only generate new color when creating a new tag
       setPreviewColor(getRandomColor());
     }
   }, [searchQuery]);
@@ -134,7 +70,13 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
   // Handle click outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (popupRef.current && !popupRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const isClickInPopup = popupRef.current && popupRef.current.contains(target);
+      const isClickInPortal = menuPortalRef.current && menuPortalRef.current.contains(target);
+      
+      if (!isClickInPopup && !isClickInPortal) {
+        setEditingTag(null);
+        setEditMenuPosition(null);
         onClose();
       }
     };
@@ -149,32 +91,50 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
 
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
-    const popupWidth = 280;
-    const popupHeight = 400;
+    const menuWidth = 280;
+    let menuHeight = 400;
     const padding = 16;
 
     let left = anchorRect.left;
     let top = anchorRect.bottom + 8;
 
     // Check right edge
-    if (left + popupWidth > viewportWidth - padding) {
-      left = Math.max(padding, viewportWidth - popupWidth - padding);
+    if (left + menuWidth > viewportWidth - padding) {
+      left = Math.max(padding, viewportWidth - menuWidth - padding);
+    }
+
+    // Check left edge
+    if (left < padding) {
+      left = padding;
     }
 
     // Check bottom edge
-    if (top + popupHeight > viewportHeight - padding) {
-      // Position above the anchor if there's more space there
-      if (anchorRect.top > viewportHeight - anchorRect.bottom) {
-        top = Math.max(padding, anchorRect.top - popupHeight - 8);
+    if (top + menuHeight > viewportHeight - padding) {
+      // Try to position above the anchor if there's more space there
+      const spaceAbove = anchorRect.top;
+      const spaceBelow = viewportHeight - anchorRect.bottom;
+
+      if (spaceAbove > spaceBelow && spaceAbove >= menuHeight + padding) {
+        // Position above
+        top = Math.max(padding, anchorRect.top - menuHeight - 8);
+      } else {
+        // Position below but constrain height
+        const availableHeight = viewportHeight - top - padding;
+        menuHeight = Math.min(menuHeight, availableHeight);
       }
+    }
+
+    // Check top edge
+    if (top < padding) {
+      top = padding;
     }
 
     return {
       position: 'fixed' as const,
       top: `${top}px`,
       left: `${left}px`,
-      width: `${popupWidth}px`,
-      maxHeight: `${popupHeight}px`,
+      width: `${menuWidth}px`,
+      maxHeight: `${menuHeight}px`,
       zIndex: 50,
     };
   };
@@ -211,14 +171,14 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
   }, [adTags, onTagsChange]);
 
   const handleCreateTag = async () => {
-    if (!searchQuery.trim() || !previewColor) return;
+    if (!searchQuery.trim()) return;
     
     try {
       const newTag = await addTag(searchQuery.trim(), previewColor);
       addTagToStore(newTag);
       await handleTagToggle(newTag);
       setSearchQuery('');
-      setPreviewColor(getRandomColor() || TAG_COLORS.default.bg);
+      setPreviewColor(getRandomColor());
     } catch (error) {
       console.error('Error creating tag:', error);
     }
@@ -253,64 +213,38 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
     }
   };
 
-  const handleUpdateTagColor = async (tag: Tag | null, color: string) => {
-    if (!tag) return;
-
+  const handleUpdateTagColor = async (tag: Tag, color: string) => {
     try {
       const updatedTag = { ...tag, color };
       await updateTag(tag.id, updatedTag);
       updateTagFromStore(updatedTag);
-      
-      // Update the tags list if this tag is currently applied to the ad
-      setAdTags(prev => prev.map(t => 
-        t.id === tag.id ? updatedTag : t
-      ));
-      
-      // Update available tags
-      setAvailableTags(prev => prev.map(t =>
-        t.id === tag.id ? updatedTag : t
-      ));
-
-      // Close menu after successful update
       setEditingTag(null);
-      setMenuPosition(null);
     } catch (error) {
       console.error('Error updating tag color:', error);
     }
   };
 
-  const handleRenameTag = async (tag: Tag | null, newName: string) => {
-    if (!tag || !newName.trim() || newName === tag.name) {
+  const handleRenameTag = async (tag: Tag, newName: string) => {
+    if (!tag || !newName.trim() || newName.trim() === tag.name) {
       setIsRenaming(null);
-      setNewTagName('');
       return;
     }
 
     try {
       const updatedTag = { ...tag, name: newName.trim() };
       await updateTag(tag.id, updatedTag);
+      
+      // Update both the store and local state
       updateTagFromStore(updatedTag);
+      setAvailableTags(prev => prev.map(t => t.id === tag.id ? updatedTag : t));
+      setAdTags(prev => prev.map(t => t.id === tag.id ? updatedTag : t));
       
-      // Update the tags list if this tag is currently applied to the ad
-      setAdTags(prev => prev.map(t => 
-        t.id === tag.id ? updatedTag : t
-      ));
-      
-      // Update available tags
-      setAvailableTags(prev => prev.map(t =>
-        t.id === tag.id ? updatedTag : t
-      ));
-
-      // Close menu after successful update
       setIsRenaming(null);
-      setNewTagName('');
       setEditingTag(null);
-      setMenuPosition(null);
     } catch (error) {
       console.error('Error renaming tag:', error);
-      // Reset state on error
-      setIsRenaming(null);
-      setNewTagName('');
+      // Keep the menu open if there's an error
+      setNewTagName(tag.name);
     }
   };
 
@@ -320,16 +254,7 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
     try {
       await deleteTag(tag.id);
       deleteTagFromStore(tag.id);
-      
-      // Remove the tag from the current ad's tags if it exists
-      setAdTags(prev => prev.filter(t => t.id !== tag.id));
-      
-      // Remove the tag from available tags
-      setAvailableTags(prev => prev.filter(t => t.id !== tag.id));
-
-      // Close menu after successful deletion
       setEditingTag(null);
-      setMenuPosition(null);
     } catch (error) {
       console.error('Error deleting tag:', error);
     }
@@ -369,127 +294,74 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
     }
   };
 
-  // Update the edit button click handler
+  // Calculate edit menu position
+  const calculateEditMenuPosition = (buttonElement: HTMLElement) => {
+    const rect = buttonElement.getBoundingClientRect();
+    const menuWidth = 192; // w-48 = 12rem = 192px
+    const menuHeight = 150; // Approximate height of edit menu
+    const padding = 8;
+    
+    let left = rect.right;
+    let top = rect.top;
+
+    // Check right edge
+    if (left + menuWidth > window.innerWidth - padding) {
+      left = rect.left - menuWidth;
+    }
+
+    // Check bottom edge
+    if (top + menuHeight > window.innerHeight - padding) {
+      top = Math.max(padding, window.innerHeight - menuHeight - padding);
+    }
+
+    // Check top edge
+    if (top < padding) {
+      top = padding;
+    }
+
+    return { top, left };
+  };
+
   const handleEditButtonClick = (e: React.MouseEvent, tag: Tag) => {
     e.stopPropagation();
     const button = e.currentTarget as HTMLElement;
-    
-    if (editingTag?.id === tag.id) {
-      setEditingTag(null);
-      setMenuPosition(null);
-    } else {
-      setEditingTag(tag);
-      setMenuPosition(calculateMenuPosition(button));
+    const position = calculateEditMenuPosition(button);
+    setEditMenuPosition(position);
+    setEditingTag(editingTag?.id === tag.id ? null : tag);
+  };
+
+  const handleMenuItemClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+  };
+
+  const handleRenameClick = (e: React.MouseEvent, tag: Tag) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setIsRenaming(tag.id);
+    setNewTagName(tag.name);
+  };
+
+  const handleRenameInputKeyDown = (e: React.KeyboardEvent, tag: Tag) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleRenameTag(tag, newTagName);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setIsRenaming(null);
     }
   };
 
-  // Create a portal component for the menu
-  const TagEditMenu = () => {
-    if (!editingTag || !menuPosition) return null;
+  const handleColorClick = (e: React.MouseEvent, tag: Tag, color: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    handleUpdateTagColor(tag, color);
+  };
 
-    const handleMenuClick = (e: React.MouseEvent) => {
-      e.stopPropagation();
-      e.preventDefault();
-    };
-
-    const handleRenameClick = (e: React.MouseEvent) => {
-      e.stopPropagation();
-      e.preventDefault();
-      setIsRenaming(editingTag.id);
-      setNewTagName(editingTag.name);
-    };
-
-    const handleRenameInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-      e.stopPropagation();
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        if (editingTag && newTagName.trim()) {
-          handleRenameTag(editingTag, newTagName);
-        }
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        setIsRenaming(null);
-        setNewTagName('');
-      }
-    };
-
-    const handleRenameInputBlur = () => {
-      if (editingTag && newTagName.trim()) {
-        handleRenameTag(editingTag, newTagName);
-      } else {
-        setIsRenaming(null);
-        setNewTagName('');
-      }
-    };
-
-    const handleColorClick = (e: React.MouseEvent, color: string) => {
-      e.stopPropagation();
-      e.preventDefault();
-      if (editingTag) {
-        handleUpdateTagColor(editingTag, color);
-      }
-    };
-
-    const handleDeleteClick = (e: React.MouseEvent) => {
-      e.stopPropagation();
-      e.preventDefault();
-      if (editingTag) {
-        handleDeleteTag(editingTag);
-      }
-    };
-
-    return createPortal(
-      <div
-        className="fixed z-[9999] bg-white rounded-md shadow-lg py-1 w-48 border border-gray-200"
-        style={{
-          top: menuPosition.top,
-          left: menuPosition.left,
-          transformOrigin: menuPosition.transformOrigin,
-        }}
-        onClick={handleMenuClick}
-      >
-        {isRenaming === editingTag.id ? (
-          <div className="px-3 py-2">
-            <input
-              type="text"
-              value={newTagName}
-              onChange={(e) => setNewTagName(e.target.value)}
-              onKeyDown={handleRenameInputKeyDown}
-              onBlur={handleRenameInputBlur}
-              className="w-full px-2 py-1 text-sm border rounded"
-              autoFocus
-            />
-          </div>
-        ) : (
-          <button
-            onClick={handleRenameClick}
-            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer"
-          >
-            Rename
-          </button>
-        )}
-        <div className="px-3 py-2">
-          <div className="grid grid-cols-5 gap-1">
-            {Object.values(TAG_COLORS).map(({ bg, name }) => (
-              <button
-                key={name}
-                onClick={(e) => handleColorClick(e, bg)}
-                className="w-6 h-6 rounded border border-gray-200 cursor-pointer hover:opacity-90"
-                style={{ backgroundColor: bg }}
-                title={name}
-              />
-            ))}
-          </div>
-        </div>
-        <button
-          onClick={handleDeleteClick}
-          className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer"
-        >
-          Delete Tag
-        </button>
-      </div>,
-      document.body
-    );
+  const handleDeleteClick = (e: React.MouseEvent, tag: Tag) => {
+    e.stopPropagation();
+    e.preventDefault();
+    handleDeleteTag(tag);
   };
 
   return (
@@ -552,7 +424,7 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
               >
                 <div className="flex items-center gap-2">
                   <span className="text-gray-500">Create:</span>
-                  {previewColor !== null && (
+                  {previewColor && (
                     <span 
                       className="px-2 py-0.5 text-xs rounded"
                       style={{ backgroundColor: previewColor }}
@@ -578,7 +450,10 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
                     cursor-pointer select-none
                     ${isHighlighted ? 'bg-blue-50' : 'hover:bg-gray-50'}
                   `}
-                  onClick={() => handleTagToggle(tag)}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleTagToggle(tag);
+                  }}
                 >
                   <div className="flex items-center gap-2 flex-1">
                     <span
@@ -607,9 +482,66 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
           </div>
         )}
       </div>
-      
-      {/* Render the portal menu */}
-      <TagEditMenu />
+
+      {/* Tag Edit Menu Portal */}
+      {editingTag && editMenuPosition && createPortal(
+        <div 
+          ref={menuPortalRef}
+          onClick={handleMenuItemClick}
+          className="fixed bg-white rounded-md shadow-lg py-1 z-50 w-48 border border-gray-200"
+          style={{
+            top: `${editMenuPosition.top}px`,
+            left: `${editMenuPosition.left}px`,
+          }}
+        >
+          {isRenaming === editingTag.id ? (
+            <div className="px-3 py-2" onClick={e => e.stopPropagation()}>
+              <input
+                type="text"
+                value={newTagName}
+                onChange={(e) => setNewTagName(e.target.value)}
+                onKeyDown={(e) => handleRenameInputKeyDown(e, editingTag)}
+                onBlur={() => {
+                  if (newTagName.trim() && newTagName !== editingTag.name) {
+                    handleRenameTag(editingTag, newTagName);
+                  } else {
+                    setIsRenaming(null);
+                  }
+                }}
+                className="w-full px-2 py-1 text-sm border rounded"
+                autoFocus
+              />
+            </div>
+          ) : (
+            <button
+              onClick={(e) => handleRenameClick(e, editingTag)}
+              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer"
+            >
+              Rename
+            </button>
+          )}
+          <div className="px-3 py-2">
+            <div className="grid grid-cols-5 gap-1">
+              {Object.values(TAG_COLORS).map(({ bg, name }) => (
+                <button
+                  key={name}
+                  onClick={(e) => handleColorClick(e, editingTag, bg)}
+                  className="w-6 h-6 rounded border border-gray-200 cursor-pointer hover:opacity-90"
+                  style={{ backgroundColor: bg }}
+                  title={name}
+                />
+              ))}
+            </div>
+          </div>
+          <button
+            onClick={(e) => handleDeleteClick(e, editingTag)}
+            className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer"
+          >
+            Delete Tag
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 } 
