@@ -1,9 +1,12 @@
+"use client";
+
 import { useState, useEffect, useRef, KeyboardEvent } from 'react';
 import { Tag } from '@/app/types/tag';
 import { getAllTags, getTagsForAd, tagAd, removeTagFromAd, addTag, deleteTag, updateTag } from '@/app/lib/tagService';
 import { TAG_COLORS, TagColorKey } from '@/app/constants/colors';
 import { useTagStore } from '@/app/store/tagStore';
 import { debounce } from 'lodash';
+import { createPortal } from 'react-dom';
 
 interface AdTagEditorProps {
   adId: string;
@@ -13,7 +16,22 @@ interface AdTagEditorProps {
   onTagsChange: (newTags: Tag[]) => void;
 }
 
+// Move helper functions outside component
+const getRandomColor = () => {
+  const colors = Object.values(TAG_COLORS);
+  return colors[Math.floor(Math.random() * colors.length)].bg;
+};
+
+// Add this type for menu positioning
+interface MenuPosition {
+  top: number;
+  left: number;
+  transformOrigin: string;
+}
+
 export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, onTagsChange }: AdTagEditorProps) {
+  // Initialize with null instead of random value
+  const [previewColor, setPreviewColor] = useState<string | null>(null);
   const [availableTags, setAvailableTags] = useState<Tag[]>([]);
   const [adTags, setAdTags] = useState<Tag[]>(currentTags);
   const [loading, setLoading] = useState(true);
@@ -25,23 +43,51 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
   const [isRenaming, setIsRenaming] = useState<string | null>(null);
   const [newTagName, setNewTagName] = useState('');
   const { tags: availableTagsFromStore, updateTag: updateTagFromStore, deleteTag: deleteTagFromStore, addTag: addTagToStore } = useTagStore();
-  const [previewColor, setPreviewColor] = useState('');
 
-  // Move getRandomColor outside the component
-  const getRandomColor = () => {
-    const colors = Object.values(TAG_COLORS);
-    return colors[Math.floor(Math.random() * colors.length)].bg;
+  // Add new state for menu positioning
+  const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
+  
+  // Function to calculate menu position
+  const calculateMenuPosition = (buttonElement: HTMLElement) => {
+    const rect = buttonElement.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    const viewportWidth = window.innerWidth;
+    const menuWidth = 192; // 48rem
+    const menuHeight = 120; // Approximate height of menu
+    
+    let left = rect.right;
+    let top = rect.top;
+    let transformOrigin = 'top left';
+
+    // Check right edge of screen
+    if (left + menuWidth > viewportWidth) {
+      left = rect.left - menuWidth;
+      transformOrigin = 'top right';
+    }
+
+    // Check bottom edge of screen
+    if (top + menuHeight > viewportHeight) {
+      top = viewportHeight - menuHeight;
+      if (top < 0) top = 0;
+    }
+
+    return {
+      top,
+      left,
+      transformOrigin,
+    };
   };
 
-  // Initialize the preview color on the client side only
+  // Initialize preview color on mount only
   useEffect(() => {
-    setPreviewColor(getRandomColor());
-  }, []); // Run once on mount
+    if (previewColor === null) {
+      setPreviewColor(getRandomColor());
+    }
+  }, []);
 
-  // Update the search query effect
+  // Update search query effect
   useEffect(() => {
-    if (!searchQuery) {
-      // Only generate new color when creating a new tag
+    if (!searchQuery && previewColor !== null) {
       setPreviewColor(getRandomColor());
     }
   }, [searchQuery]);
@@ -259,6 +305,86 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
     }
   };
 
+  // Update the edit button click handler
+  const handleEditButtonClick = (e: React.MouseEvent, tag: Tag) => {
+    e.stopPropagation();
+    const button = e.currentTarget as HTMLElement;
+    
+    if (editingTag?.id === tag.id) {
+      setEditingTag(null);
+      setMenuPosition(null);
+    } else {
+      setEditingTag(tag);
+      setMenuPosition(calculateMenuPosition(button));
+    }
+  };
+
+  // Create a portal component for the menu
+  const TagEditMenu = () => {
+    if (!editingTag || !menuPosition) return null;
+
+    return createPortal(
+      <div
+        className="fixed z-[9999] bg-white rounded-md shadow-lg py-1 w-48 border border-gray-200"
+        style={{
+          top: menuPosition.top,
+          left: menuPosition.left,
+          transformOrigin: menuPosition.transformOrigin,
+        }}
+      >
+        {isRenaming === editingTag.id ? (
+          <div className="px-3 py-2">
+            <input
+              type="text"
+              value={newTagName}
+              onChange={(e) => setNewTagName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleRenameTag(editingTag, newTagName);
+                } else if (e.key === 'Escape') {
+                  setIsRenaming(null);
+                }
+              }}
+              onBlur={() => handleRenameTag(editingTag, newTagName)}
+              className="w-full px-2 py-1 text-sm border rounded"
+              autoFocus
+            />
+          </div>
+        ) : (
+          <button
+            onClick={() => {
+              setIsRenaming(editingTag.id);
+              setNewTagName(editingTag.name);
+            }}
+            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer"
+          >
+            Rename
+          </button>
+        )}
+        <div className="px-3 py-2">
+          <div className="grid grid-cols-5 gap-1">
+            {Object.values(TAG_COLORS).map(({ bg, name }) => (
+              <button
+                key={name}
+                onClick={() => handleUpdateTagColor(editingTag, bg)}
+                className="w-6 h-6 rounded border border-gray-200 cursor-pointer hover:opacity-90"
+                style={{ backgroundColor: bg }}
+                title={name}
+              />
+            ))}
+          </div>
+        </div>
+        <button
+          onClick={() => handleDeleteTag(editingTag)}
+          className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer"
+        >
+          Delete Tag
+        </button>
+      </div>,
+      document.body
+    );
+  };
+
   return (
     <div 
       ref={popupRef}
@@ -319,7 +445,7 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
               >
                 <div className="flex items-center gap-2">
                   <span className="text-gray-500">Create:</span>
-                  {previewColor && (
+                  {previewColor !== null && (
                     <span 
                       className="px-2 py-0.5 text-xs rounded"
                       style={{ backgroundColor: previewColor }}
@@ -345,10 +471,7 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
                     cursor-pointer select-none
                     ${isHighlighted ? 'bg-blue-50' : 'hover:bg-gray-50'}
                   `}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    handleTagToggle(tag);
-                  }}
+                  onClick={() => handleTagToggle(tag)}
                 >
                   <div className="flex items-center gap-2 flex-1">
                     <span
@@ -364,76 +487,22 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
                   </div>
 
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation(); // Prevent tag toggle when clicking edit button
-                      setEditingTag(editingTag?.id === tag.id ? null : tag);
-                    }}
+                    onClick={(e) => handleEditButtonClick(e, tag)}
                     className="opacity-0 group-hover:opacity-100 p-1 transition-opacity cursor-pointer"
                   >
                     <svg className="w-4 h-4 text-gray-400 hover:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/>
                     </svg>
                   </button>
-
-                  {/* Tag Edit Menu */}
-                  {editingTag?.id === tag.id && (
-                    <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg py-1 z-10">
-                      {isRenaming === tag.id ? (
-                        <div className="px-3 py-2">
-                          <input
-                            type="text"
-                            value={newTagName}
-                            onChange={(e) => setNewTagName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                handleRenameTag(tag, newTagName);
-                              } else if (e.key === 'Escape') {
-                                setIsRenaming(null);
-                              }
-                            }}
-                            onBlur={() => handleRenameTag(tag, newTagName)}
-                            className="w-full px-2 py-1 text-sm border rounded"
-                            autoFocus
-                          />
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setIsRenaming(tag.id);
-                            setNewTagName(tag.name);
-                          }}
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer"
-                        >
-                          Rename
-                        </button>
-                      )}
-                      <div className="px-3 py-2">
-                        <div className="grid grid-cols-5 gap-1">
-                          {Object.values(TAG_COLORS).map(({ bg, name }) => (
-                            <button
-                              key={name}
-                              onClick={() => handleUpdateTagColor(tag, bg)}
-                              className="w-6 h-6 rounded border border-gray-200 cursor-pointer hover:opacity-90"
-                              style={{ backgroundColor: bg }}
-                              title={name}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteTag(tag)}
-                        className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer"
-                      >
-                        Delete Tag
-                      </button>
-                    </div>
-                  )}
                 </div>
               );
             })}
           </div>
         )}
       </div>
+      
+      {/* Render the portal menu */}
+      <TagEditMenu />
     </div>
   );
 } 
