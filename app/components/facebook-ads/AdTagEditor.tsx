@@ -5,7 +5,7 @@ import { Tag } from '@/app/types/tag';
 import { getAllTags, getTagsForAd, tagAd, removeTagFromAd, addTag, deleteTag, updateTag } from '@/app/lib/tagService';
 import { TAG_COLORS, TagColorKey } from '@/app/constants/colors';
 import { useTagStore } from '@/app/store/tagStore';
-import { debounce } from 'lodash';
+import debounce from 'lodash/debounce';
 import { createPortal } from 'react-dom';
 
 interface AdTagEditorProps {
@@ -54,21 +54,42 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
     const viewportWidth = window.innerWidth;
     const menuWidth = 192; // 48rem
     const menuHeight = 120; // Approximate height of menu
+    const padding = 8; // Minimum padding from viewport edges
     
-    let left = rect.right;
+    let left = rect.right + padding;
     let top = rect.top;
     let transformOrigin = 'top left';
 
     // Check right edge of screen
-    if (left + menuWidth > viewportWidth) {
-      left = rect.left - menuWidth;
+    if (left + menuWidth > viewportWidth - padding) {
+      left = rect.left - menuWidth - padding;
       transformOrigin = 'top right';
+      
+      // If still overflowing right, align with right edge of viewport
+      if (left + menuWidth > viewportWidth - padding) {
+        left = viewportWidth - menuWidth - padding;
+      }
+    }
+
+    // Check left edge of screen
+    if (left < padding) {
+      left = padding;
+      transformOrigin = 'top left';
     }
 
     // Check bottom edge of screen
-    if (top + menuHeight > viewportHeight) {
-      top = viewportHeight - menuHeight;
-      if (top < 0) top = 0;
+    if (top + menuHeight > viewportHeight - padding) {
+      top = viewportHeight - menuHeight - padding;
+      
+      // If still overflowing bottom, align with top of viewport
+      if (top < padding) {
+        top = padding;
+      }
+    }
+
+    // Check top edge of screen
+    if (top < padding) {
+      top = padding;
     }
 
     return {
@@ -81,7 +102,7 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
   // Initialize preview color on mount only
   useEffect(() => {
     if (previewColor === null) {
-      setPreviewColor(getRandomColor());
+      setPreviewColor(getRandomColor() || TAG_COLORS.default.bg);
     }
   }, []);
 
@@ -190,14 +211,14 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
   }, [adTags, onTagsChange]);
 
   const handleCreateTag = async () => {
-    if (!searchQuery.trim()) return;
+    if (!searchQuery.trim() || !previewColor) return;
     
     try {
       const newTag = await addTag(searchQuery.trim(), previewColor);
       addTagToStore(newTag);
       await handleTagToggle(newTag);
       setSearchQuery('');
-      setPreviewColor(getRandomColor());
+      setPreviewColor(getRandomColor() || TAG_COLORS.default.bg);
     } catch (error) {
       console.error('Error creating tag:', error);
     }
@@ -232,20 +253,36 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
     }
   };
 
-  const handleUpdateTagColor = async (tag: Tag, color: string) => {
+  const handleUpdateTagColor = async (tag: Tag | null, color: string) => {
+    if (!tag) return;
+
     try {
       const updatedTag = { ...tag, color };
       await updateTag(tag.id, updatedTag);
       updateTagFromStore(updatedTag);
+      
+      // Update the tags list if this tag is currently applied to the ad
+      setAdTags(prev => prev.map(t => 
+        t.id === tag.id ? updatedTag : t
+      ));
+      
+      // Update available tags
+      setAvailableTags(prev => prev.map(t =>
+        t.id === tag.id ? updatedTag : t
+      ));
+
+      // Close menu after successful update
       setEditingTag(null);
+      setMenuPosition(null);
     } catch (error) {
       console.error('Error updating tag color:', error);
     }
   };
 
-  const handleRenameTag = async (tag: Tag, newName: string) => {
-    if (!newName.trim() || newName === tag.name) {
+  const handleRenameTag = async (tag: Tag | null, newName: string) => {
+    if (!tag || !newName.trim() || newName === tag.name) {
       setIsRenaming(null);
+      setNewTagName('');
       return;
     }
 
@@ -253,9 +290,27 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
       const updatedTag = { ...tag, name: newName.trim() };
       await updateTag(tag.id, updatedTag);
       updateTagFromStore(updatedTag);
+      
+      // Update the tags list if this tag is currently applied to the ad
+      setAdTags(prev => prev.map(t => 
+        t.id === tag.id ? updatedTag : t
+      ));
+      
+      // Update available tags
+      setAvailableTags(prev => prev.map(t =>
+        t.id === tag.id ? updatedTag : t
+      ));
+
+      // Close menu after successful update
       setIsRenaming(null);
+      setNewTagName('');
+      setEditingTag(null);
+      setMenuPosition(null);
     } catch (error) {
       console.error('Error renaming tag:', error);
+      // Reset state on error
+      setIsRenaming(null);
+      setNewTagName('');
     }
   };
 
@@ -265,7 +320,16 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
     try {
       await deleteTag(tag.id);
       deleteTagFromStore(tag.id);
+      
+      // Remove the tag from the current ad's tags if it exists
+      setAdTags(prev => prev.filter(t => t.id !== tag.id));
+      
+      // Remove the tag from available tags
+      setAvailableTags(prev => prev.filter(t => t.id !== tag.id));
+
+      // Close menu after successful deletion
       setEditingTag(null);
+      setMenuPosition(null);
     } catch (error) {
       console.error('Error deleting tag:', error);
     }
@@ -323,6 +387,57 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
   const TagEditMenu = () => {
     if (!editingTag || !menuPosition) return null;
 
+    const handleMenuClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+    };
+
+    const handleRenameClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      setIsRenaming(editingTag.id);
+      setNewTagName(editingTag.name);
+    };
+
+    const handleRenameInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (editingTag && newTagName.trim()) {
+          handleRenameTag(editingTag, newTagName);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setIsRenaming(null);
+        setNewTagName('');
+      }
+    };
+
+    const handleRenameInputBlur = () => {
+      if (editingTag && newTagName.trim()) {
+        handleRenameTag(editingTag, newTagName);
+      } else {
+        setIsRenaming(null);
+        setNewTagName('');
+      }
+    };
+
+    const handleColorClick = (e: React.MouseEvent, color: string) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (editingTag) {
+        handleUpdateTagColor(editingTag, color);
+      }
+    };
+
+    const handleDeleteClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (editingTag) {
+        handleDeleteTag(editingTag);
+      }
+    };
+
     return createPortal(
       <div
         className="fixed z-[9999] bg-white rounded-md shadow-lg py-1 w-48 border border-gray-200"
@@ -331,6 +446,7 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
           left: menuPosition.left,
           transformOrigin: menuPosition.transformOrigin,
         }}
+        onClick={handleMenuClick}
       >
         {isRenaming === editingTag.id ? (
           <div className="px-3 py-2">
@@ -338,24 +454,15 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
               type="text"
               value={newTagName}
               onChange={(e) => setNewTagName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  handleRenameTag(editingTag, newTagName);
-                } else if (e.key === 'Escape') {
-                  setIsRenaming(null);
-                }
-              }}
-              onBlur={() => handleRenameTag(editingTag, newTagName)}
+              onKeyDown={handleRenameInputKeyDown}
+              onBlur={handleRenameInputBlur}
               className="w-full px-2 py-1 text-sm border rounded"
               autoFocus
             />
           </div>
         ) : (
           <button
-            onClick={() => {
-              setIsRenaming(editingTag.id);
-              setNewTagName(editingTag.name);
-            }}
+            onClick={handleRenameClick}
             className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer"
           >
             Rename
@@ -366,7 +473,7 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
             {Object.values(TAG_COLORS).map(({ bg, name }) => (
               <button
                 key={name}
-                onClick={() => handleUpdateTagColor(editingTag, bg)}
+                onClick={(e) => handleColorClick(e, bg)}
                 className="w-6 h-6 rounded border border-gray-200 cursor-pointer hover:opacity-90"
                 style={{ backgroundColor: bg }}
                 title={name}
@@ -375,7 +482,7 @@ export default function AdTagEditor({ adId, onClose, anchorRect, currentTags, on
           </div>
         </div>
         <button
-          onClick={() => handleDeleteTag(editingTag)}
+          onClick={handleDeleteClick}
           className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer"
         >
           Delete Tag
