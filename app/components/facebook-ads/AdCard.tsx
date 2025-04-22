@@ -61,11 +61,13 @@ export default function AdCard({ ad }: AdCardProps) {
 
   const handleTagAreaClick = () => {
     
-    // if (tagAreaRef.current) {
-    //   const rect = tagAreaRef.current.getBoundingClientRect();
-    //   setTagEditorAnchor(rect);
-    //   setShowTagEditor(true);
-    // }
+    if (window.location.pathname.includes('admin')) {
+      if (tagAreaRef.current) {
+        const rect = tagAreaRef.current.getBoundingClientRect();
+        setTagEditorAnchor(rect);
+        setShowTagEditor(true);
+      }
+    }
   };
 
   const handleTagsChange = (newTags: Tag[]) => {

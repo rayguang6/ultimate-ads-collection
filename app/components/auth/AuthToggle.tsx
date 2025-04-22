@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import SignIn from './SignIn';
+import SignIn from '../../admin/SignIn';
 import SignUp from './SignUp';
 
 export default function AuthToggle() {
