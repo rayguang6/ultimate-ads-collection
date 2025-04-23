@@ -24,7 +24,7 @@ export default function SignIn() {
         setError(error.message);
       } else {
         // Redirect to admin dashboard after successful sign in
-        router.push('/admin/admin-dashboard');
+        router.push('/admin/');
       }
     } catch (err) {
       setError('An unexpected error occurred');

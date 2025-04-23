@@ -16,7 +16,7 @@ export default function SearchBar({ onSearch, totalCount, displayedCount }: Sear
   }, [debouncedSearchQuery, onSearch]);
   
   return (
-    <div className="w-full max-w-3xl mx-auto py-4">
+    <div className="w-full max-w-3xl mx-auto">
       <div className="relative">
         <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
           <svg 

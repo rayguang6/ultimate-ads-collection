@@ -142,22 +142,31 @@ export async function getStats() {
 export async function deleteAd(id: string) {
   try {
     // First delete the tag relationships
-    await supabase
+    const { error: tagError } = await supabase
       .from('ad_tags')
       .delete()
       .eq('ad_id', id);
     
+    if (tagError) {
+      console.error(`Error deleting ad tags for ad ${id}:`, tagError);
+      return false;
+    }
+    
     // Then delete the ad
-    const { error } = await supabase
+    const { error: adError } = await supabase
       .from('facebook_ads')
       .delete()
       .eq('id', id);
     
-    if (error) throw error;
+    if (adError) {
+      console.error(`Error deleting ad ${id}:`, adError);
+      return false;
+    }
     
+    console.log(`Successfully deleted ad ${id}`);
     return true;
   } catch (error) {
-    console.error(`Error deleting ad with id ${id}:`, error);
+    console.error(`Error in deleteAd function for id ${id}:`, error);
     return false;
   }
 }

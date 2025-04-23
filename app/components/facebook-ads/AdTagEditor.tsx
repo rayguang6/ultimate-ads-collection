@@ -4,7 +4,6 @@ import { Tag } from '@/app/types/tag';
 import { getAllTags, getTagsForAd, tagAd, removeTagFromAd, addTag, deleteTag, updateTag } from '@/app/lib/tagService';
 import { TAG_COLORS, TagColorKey } from '@/app/constants/colors';
 import { useTagStore } from '@/app/store/tagStore';
-import { debounce } from 'lodash';
 
 interface AdTagEditorProps {
   adId: string;
