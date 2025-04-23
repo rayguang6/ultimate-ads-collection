@@ -206,9 +206,9 @@ export default function AdminAdCard({ ad, onDelete }: AdminAdCardProps) {
                   key={tag.id} 
                   className="px-2 py-0.5 text-xs rounded"
                   style={{ 
-                    backgroundColor: `${tag.color}40` || '#FFFFFF40', 
-                    color: tag.color || '#000000',
-                    border: `1px solid ${tag.color}80` || '#00000080'
+                    backgroundColor: `${tag.color}` || '#FFFFFF40', 
+                    color: '#000000',
+                    border: `1px solid ${tag.color}` || '#00000080'
                   }}
                 >
                   {tag.name}

@@ -81,8 +81,8 @@ export default function AdminTagSelector({ tags, selectedTags, onTagSelect, load
         </motion.div>
         {selectedTags.length > 0 && (
           <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, y: 100 }}
+            animate={{ opacity: 1, y: 10 }}
             className="mt-4 flex justify-center"
           >
             <button
